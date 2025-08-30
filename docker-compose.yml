@@ -1,0 +1,78 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ibanking_postgres
+    environment:
+      POSTGRES_DB: ibanking
+      POSTGRES_USER: ibanking
+      POSTGRES_PASSWORD: ibanking
+    ports:
+      - "55432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ibanking -d ibanking"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ibanking_redis
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: ibanking_mailhog
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+
+  backend:
+    image: ibanking-backend:latest
+    container_name: ibanking_backend
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ibanking
+      SPRING_DATASOURCE_USERNAME: ibanking
+      SPRING_DATASOURCE_PASSWORD: ibanking
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_MAIL_HOST: mailhog
+      SPRING_MAIL_PORT: 1025
+      SERVER_PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    ports:
+      - "8080:8080"
+
+  frontend:
+    image: ibanking-frontend:latest
+    container_name: ibanking_frontend
+    environment:
+      NEXT_PUBLIC_API_BASE: http://backend:8080
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  pg_data: {}
+  redis_data: {}
+
+

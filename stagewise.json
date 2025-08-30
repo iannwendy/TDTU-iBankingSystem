@@ -1,0 +1,5 @@
+{
+  "appPort": 3000,
+  "port": 3100,
+  "telemetry": "full"
+}
