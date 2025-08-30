@@ -1,18 +1,11 @@
 package com.ibanking.tuition.tuition;
 
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
 @Table(name = "student_tuition")
-@Getter
-@Setter
-@NoArgsConstructor
 public class StudentTuition {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -39,6 +32,29 @@ public class StudentTuition {
     @Version
     @Column(nullable = false)
     private Long version = 0L;
+
+    // Default constructor
+    public StudentTuition() {}
+
+    // Getters
+    public Long getId() { return id; }
+    public String getStudentId() { return studentId; }
+    public String getStudentName() { return studentName; }
+    public String getSemester() { return semester; }
+    public BigDecimal getAmount() { return amount; }
+    public boolean isPaid() { return paid; }
+    public LocalDate getPaidDate() { return paidDate; }
+    public Long getVersion() { return version; }
+
+    // Setters
+    public void setId(Long id) { this.id = id; }
+    public void setStudentId(String studentId) { this.studentId = studentId; }
+    public void setStudentName(String studentName) { this.studentName = studentName; }
+    public void setSemester(String semester) { this.semester = semester; }
+    public void setAmount(BigDecimal amount) { this.amount = amount; }
+    public void setPaid(boolean paid) { this.paid = paid; }
+    public void setPaidDate(LocalDate paidDate) { this.paidDate = paidDate; }
+    public void setVersion(Long version) { this.version = version; }
 }
 
 
