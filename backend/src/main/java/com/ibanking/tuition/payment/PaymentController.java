@@ -292,66 +292,9 @@ public class PaymentController {
 
     private void sendConfirmationEmail(Customer payer, PaymentTransaction txn, StudentTuition tuition) {
         try {
-            MimeMessage mime = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(mime, false, "UTF-8");
-            helper.setFrom("no-reply@ibanking.local");
-            helper.setTo(payer.getEmail());
-            helper.setSubject("iBanking Tuition Payment – Transaction Confirmed");
-            String amountStr = String.format("%,.0f VND", tuition.getAmount().doubleValue());
-            String html = """
-                <div style='background:#0b1020;padding:24px;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#e5e7eb;'>
-                  <div style='max-width:640px;margin:0 auto;background:#11162a;border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;'>
-                    <div style='padding:20px 24px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;'>
-                      <span style='display:inline-block;width:10px;height:10px;background:#10b981;border-radius:50%'></span>
-                      <strong style='font-size:16px;color:#fff'>Payment Confirmed</strong>
-                    </div>
-                    <div style='padding:24px;color:#d1d5db;'>
-                      <p style='margin:0 0 12px 0;'>Hi <strong style='color:#fff'>%s</strong>,</p>
-                      <p style='margin:0 0 16px 0;'>Your tuition payment has been successfully processed.</p>
-                      <div style='margin:16px 0 20px 0;padding:14px 18px;background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:12px;text-align:center;'>
-                        <div style='font-size:13px;letter-spacing:.02em;color:#94a3b8;margin-bottom:6px;'>Transaction Status</div>
-                        <div style='font-size:28px;letter-spacing:.1em;color:#10b981;font-weight:700'>SUCCESS</div>
-                      </div>
-                      <table style='width:100%%;font-size:14px;color:#d1d5db;margin:12px 0 20px 0;'>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Transaction ID</td><td style='text-align:right;color:#fff'>%d</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Student ID</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Semester</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Amount Paid</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Payment Date</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Remaining Balance</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                      </table>
-                      <p style='margin:0 0 8px 0;font-size:12px;color:#94a3b8;'>Thank you for using iBanking services.</p>
-                      <p style='margin:0 0 0 0;font-size:12px;color:#94a3b8;'>If you have any questions, please contact our support team.</p>
-                    </div>
-                  </div>
-                  <div style='max-width:640px;margin:12px auto 0 auto;text-align:center;font-size:12px;color:#8b93a7;'>
-                    © %d iBanking. All rights reserved.
-                  </div>
-                </div>
-            """.formatted(
-                    payer.getFullName(),
-                    txn.getId(),
-                    tuition.getStudentId(),
-                    tuition.getSemester(),
-                    amountStr,
-                    java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")),
-                    String.format("%,.0f VND", payer.getBalance().doubleValue()),
-                    java.time.LocalDate.now().getYear()
-            );
-            helper.setText(html, true);
-            mailSender.send(mime);
+            emailService.sendPaymentConfirmationEmail(payer, txn, tuition);
         } catch (Exception e) {
-            System.err.println("[MAIL] Failed to send confirmation email, reason: " + e.getMessage());
-            try {
-                var fallback = mailSender.createMimeMessage();
-                MimeMessageHelper h = new MimeMessageHelper(fallback, false, "UTF-8");
-                h.setFrom("no-reply@ibanking.local");
-                h.setTo(payer.getEmail());
-                h.setSubject("Payment Confirmed - Transaction ID: " + txn.getId());
-                String fallbackAmountStr = String.format("%,.0f VND", tuition.getAmount().doubleValue());
-                h.setText("Your tuition payment of " + fallbackAmountStr + " has been successfully processed.\nTransaction ID: " + txn.getId() + "\nStudent ID: " + tuition.getStudentId() + "\nSemester: " + tuition.getSemester());
-                mailSender.send(fallback);
-            } catch (Exception ignored) {}
+            System.err.println("Failed to send confirmation email: " + e.getMessage());
         }
     }
 

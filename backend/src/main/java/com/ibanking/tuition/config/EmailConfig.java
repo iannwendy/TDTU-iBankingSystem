@@ -38,7 +38,7 @@ public class EmailConfig {
     @Qualifier("mailPitSender")
     public JavaMailSender mailPitSender() {
         JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
-        mailSender.setHost("localhost");
+        mailSender.setHost("mailpit");
         mailSender.setPort(1025);
         mailSender.setUsername("");
         mailSender.setPassword("");
