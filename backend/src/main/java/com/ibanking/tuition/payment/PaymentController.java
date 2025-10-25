@@ -5,6 +5,7 @@ import com.ibanking.tuition.user.CustomerRepository;
 import com.ibanking.tuition.tuition.SemesterUtil;
 import com.ibanking.tuition.tuition.StudentTuition;
 import com.ibanking.tuition.tuition.StudentTuitionRepository;
+import com.ibanking.tuition.email.EmailService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.mail.javamail.JavaMailSender;
 import jakarta.mail.internet.MimeMessage;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -33,6 +35,8 @@ public class PaymentController {
     private final PaymentService paymentService;
     private final StringRedisTemplate redisTemplate;
     private final JavaMailSender mailSender;
+    private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
 
     private final int otpTtlSeconds;
     private final int otpLength;
@@ -43,7 +47,9 @@ public class PaymentController {
                            PaymentTransactionRepository paymentTransactionRepository,
                            PaymentService paymentService,
                            StringRedisTemplate redisTemplate, 
-                           JavaMailSender mailSender, 
+                           JavaMailSender mailSender,
+                           PasswordEncoder passwordEncoder,
+                           EmailService emailService,
                            @org.springframework.beans.factory.annotation.Value("${app.otp.ttlSeconds}") int otpTtlSeconds, 
                            @org.springframework.beans.factory.annotation.Value("${app.otp.length}") int otpLength, 
                            @org.springframework.beans.factory.annotation.Value("${app.otp.maxAttempts}") int maxAttempts) {
@@ -53,6 +59,8 @@ public class PaymentController {
         this.paymentService = paymentService;
         this.redisTemplate = redisTemplate;
         this.mailSender = mailSender;
+        this.passwordEncoder = passwordEncoder;
+        this.emailService = emailService;
         this.otpTtlSeconds = otpTtlSeconds;
         this.otpLength = otpLength;
         this.maxAttempts = maxAttempts;
@@ -112,7 +120,7 @@ public class PaymentController {
             redisTemplate.opsForValue().setIfAbsent(attemptKey, "0", Duration.ofSeconds(otpTtlSeconds));
 
             // Send OTP email
-            sendOtpEmail(payer, otp, txn, t);
+            emailService.sendOtpEmail(payer, otp, txn, t);
 
             return ResponseEntity.ok(Map.of("transactionId", txn.getId(), "ttlSeconds", otpTtlSeconds));
             
@@ -135,10 +143,11 @@ public class PaymentController {
         String attemptKey = attemptKey(txn.getId());
         String expected = redisTemplate.opsForValue().get(otpKey);
         if (expected == null) {
-            // Mark transaction as expired if OTP is not found
-            txn.setStatus(PaymentTransaction.Status.EXPIRED);
+            // Mark transaction as failed if OTP is not found
+            txn.setStatus(PaymentTransaction.Status.FAILED);
+            txn.setCompletedAt(OffsetDateTime.now());
             paymentTransactionRepository.save(txn);
-            return ResponseEntity.status(400).body(Map.of("message", "OTP expired. Please request a new one."));
+            return ResponseEntity.status(400).body(Map.of("message", "OTP expired. Transaction failed."));
         }
 
         Long attempts = redisTemplate.opsForValue().increment(attemptKey);
@@ -163,7 +172,17 @@ public class PaymentController {
                 redisTemplate.delete(otpKey);
                 redisTemplate.delete(attemptKey);
                 
-                return ResponseEntity.ok(Map.of("message", "Payment successful"));
+                // Return detailed transaction information for success popup
+                return ResponseEntity.ok(Map.of(
+                    "message", "Payment successful",
+                    "transactionId", txn.getId(),
+                    "studentId", txn.getStudentId(),
+                    "semester", txn.getSemester(),
+                    "amount", txn.getAmount(),
+                    "studentName", tuition.getStudentName(),
+                    "payerName", payer.getFullName(),
+                    "completedAt", txn.getCompletedAt() != null ? txn.getCompletedAt().toString() : OffsetDateTime.now().toString()
+                ));
             } else {
                 return ResponseEntity.status(500).body(Map.of("message", "Payment processing failed"));
             }
@@ -205,13 +224,16 @@ public class PaymentController {
         }
 
         // Send new OTP email
-        sendNewOtpEmail(payer, otp, txn);
+        emailService.sendOtpEmail(payer, otp, txn, studentTuitionRepository.findByStudentIdAndSemester(txn.getStudentId(), txn.getSemester()).orElseThrow());
 
         return ResponseEntity.ok(Map.of("message", "New OTP sent", "ttlSeconds", otpTtlSeconds));
     }
 
     @GetMapping("/history")
     public ResponseEntity<?> history(Authentication auth) {
+        // Clean up expired transactions before returning history
+        paymentService.processExpiredOtpTransactions();
+        
         Customer payer = customerRepository.findByUsername(auth.getName()).orElseThrow();
         var list = paymentTransactionRepository.findByPayerCustomerIdOrderByCreatedAtDesc(payer.getId());
         return ResponseEntity.ok(list.stream().map(txn -> {
@@ -227,68 +249,46 @@ public class PaymentController {
         }).toList());
     }
 
-    // Helper methods for email sending
-    private void sendOtpEmail(Customer payer, String otp, PaymentTransaction txn, StudentTuition tuition) {
+    @PostMapping("/cleanup-expired")
+    public ResponseEntity<?> cleanupExpired() {
         try {
-            MimeMessage mime = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(mime, false, "UTF-8");
-            helper.setFrom("no-reply@ibanking.local");
-            helper.setTo(payer.getEmail());
-            helper.setSubject("iBanking Tuition Payment – OTP Verification");
-            String amountStr = String.format("%,.0f VND", tuition.getAmount().doubleValue());
-            String html = """
-                <div style='background:#0b1020;padding:24px;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#e5e7eb;'>
-                  <div style='max-width:640px;margin:0 auto;background:#11162a;border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;'>
-                    <div style='padding:20px 24px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;'>
-                      <span style='display:inline-block;width:10px;height:10px;background:#3b82f6;border-radius:50%'></span>
-                      <strong style='font-size:16px;color:#fff'>iBanking Tuition Payment</strong>
-                    </div>
-                    <div style='padding:24px;color:#d1d5db;'>
-                      <p style='margin:0 0 12px 0;'>Hi <strong style='color:#fff'>%s</strong>,</p>
-                      <p style='margin:0 0 16px 0;'>Use the One-Time Password (OTP) below to confirm your tuition payment.</p>
-                      <div style='margin:16px 0 20px 0;padding:14px 18px;background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:12px;text-align:center;'>
-                        <div style='font-size:13px;letter-spacing:.02em;color:#94a3b8;margin-bottom:6px;'>Your OTP</div>
-                        <div style='font-size:28px;letter-spacing:.3em;color:#fff;font-weight:700'>%s</div>
-                      </div>
-                      <table style='width:100%%;font-size:14px;color:#d1d5db;margin:12px 0 20px 0;'>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Transaction ID</td><td style='text-align:right;color:#fff'>%d</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Student ID</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Semester</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Amount</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                      </table>
-                      <p style='margin:0 0 8px 0;font-size:12px;color:#94a3b8;'>Do not share this OTP with anyone. It will expire in %d seconds.</p>
-                      <p style='margin:0 0 0 0;font-size:12px;color:#94a3b8;'>If you didn't request this, please ignore this email.</p>
-                    </div>
-                  </div>
-                  <div style='max-width:640px;margin:12px auto 0 auto;text-align:center;font-size:12px;color:#8b93a7;'>
-                    © %d iBanking. All rights reserved.
-                  </div>
-                </div>
-            """.formatted(
-                    payer.getFullName(),
-                    otp,
-                    txn.getId(),
-                    tuition.getStudentId(),
-                    tuition.getSemester(),
-                    amountStr,
-                    otpTtlSeconds,
-                    java.time.LocalDate.now().getYear()
-            );
-            helper.setText(html, true);
-            mailSender.send(mime);
+            paymentService.processExpiredOtpTransactions();
+            return ResponseEntity.ok(Map.of("message", "Cleanup completed"));
         } catch (Exception e) {
-            System.err.println("[MAIL] Failed to send HTML email, reason: " + e.getMessage());
-            try {
-                var fallback = mailSender.createMimeMessage();
-                MimeMessageHelper h = new MimeMessageHelper(fallback, false, "UTF-8");
-                h.setFrom("no-reply@ibanking.local");
-                h.setTo(payer.getEmail());
-                h.setSubject("Your OTP for tuition payment");
-                h.setText("Your OTP is: " + otp + "\nTransaction ID: " + txn.getId());
-                mailSender.send(fallback);
-            } catch (Exception ignored) {}
+            return ResponseEntity.status(500).body(Map.of("message", "Cleanup failed: " + e.getMessage()));
         }
     }
+
+    @PostMapping("/seed-students")
+    public ResponseEntity<?> seedStudents() {
+        try {
+            int createdCount = 0;
+            for (int i = 111; i <= 123; i++) {
+                String suffix = String.format("%04d", i);
+                String mssv = "523H" + suffix;
+                
+                if (customerRepository.findByUsername(mssv).isPresent()) {
+                    continue;
+                }
+
+                Customer c = new Customer();
+                c.setUsername(mssv);
+                c.setPasswordHash(passwordEncoder.encode("pass123"));
+                c.setFullName(generateVietnameseName(i));
+                c.setBalance(new java.math.BigDecimal("15000000"));
+                c.setPhone(generatePhone(i));
+                c.setEmail("iannwendii@gmail.com");
+                customerRepository.save(c);
+                createdCount++;
+            }
+            
+            return ResponseEntity.ok(Map.of("message", "Created " + createdCount + " new students", "createdCount", createdCount));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("message", "Error creating students: " + e.getMessage()));
+        }
+    }
+
+    // Helper methods for email sending
 
     private void sendConfirmationEmail(Customer payer, PaymentTransaction txn, StudentTuition tuition) {
         try {
@@ -355,67 +355,6 @@ public class PaymentController {
         }
     }
 
-    private void sendNewOtpEmail(Customer payer, String otp, PaymentTransaction txn) {
-        try {
-            MimeMessage mime = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(mime, false, "UTF-8");
-            helper.setFrom("no-reply@ibanking.local");
-            helper.setTo(payer.getEmail());
-            helper.setSubject("iBanking Tuition Payment – New OTP Verification");
-            String amountStr = String.format("%,.0f VND", txn.getAmount().doubleValue());
-            String html = """
-                <div style='background:#0b1020;padding:24px;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#e5e7eb;'>
-                  <div style='max-width:640px;margin:0 auto;background:#11162a;border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;'>
-                    <div style='padding:20px 24px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;'>
-                      <span style='display:inline-block;width:10px;height:10px;background:#3b82f6;border-radius:50%'></span>
-                      <strong style='font-size:16px;color:#fff'>New OTP Generated</strong>
-                    </div>
-                    <div style='padding:24px;color:#d1d5db;'>
-                      <p style='margin:0 0 12px 0;'>Hi <strong style='color:#fff'>%s</strong>,</p>
-                      <p style='margin:0 0 16px 0;'>A new OTP has been generated for your tuition payment.</p>
-                      <div style='margin:16px 0 20px 0;padding:14px 18px;background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:12px;text-align:center;'>
-                        <div style='font-size:13px;letter-spacing:.02em;color:#94a3b8;margin-bottom:6px;'>Your New OTP</div>
-                        <div style='font-size:28px;letter-spacing:.3em;color:#fff;font-weight:700'>%s</div>
-                      </div>
-                      <table style='width:100%%;font-size:14px;color:#d1d5db;margin:12px 0 20px 0;'>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Transaction ID</td><td style='text-align:right;color:#fff'>%d</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Student ID</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Semester</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                        <tr><td style='padding:6px 0;color:#9ca3af'>Amount</td><td style='text-align:right;color:#fff'>%s</td></tr>
-                      </table>
-                      <p style='margin:0 0 8px 0;font-size:12px;color:#94a3b8;'>This new OTP will expire in %d seconds.</p>
-                      <p style='margin:0 0 0 0;font-size:12px;color:#94a3b8;'>If you didn't request this, please contact support immediately.</p>
-                    </div>
-                  </div>
-                  <div style='max-width:640px;margin:12px auto 0 auto;text-align:center;font-size:12px;color:#8b93a7;'>
-                    © %d iBanking. All rights reserved.
-                  </div>
-                </div>
-            """.formatted(
-                    payer.getFullName(),
-                    otp,
-                    txn.getId(),
-                    txn.getStudentId(),
-                    txn.getSemester(),
-                    amountStr,
-                    otpTtlSeconds,
-                    java.time.LocalDate.now().getYear()
-            );
-            helper.setText(html, true);
-            mailSender.send(mime);
-        } catch (Exception e) {
-            System.err.println("[MAIL] Failed to send new OTP email, reason: " + e.getMessage());
-            try {
-                var fallback = mailSender.createMimeMessage();
-                MimeMessageHelper h = new MimeMessageHelper(fallback, false, "UTF-8");
-                h.setFrom("no-reply@ibanking.local");
-                h.setTo(payer.getEmail());
-                h.setSubject("New OTP for tuition payment");
-                h.setText("Your new OTP is: " + otp + "\nTransaction ID: " + txn.getId());
-                mailSender.send(fallback);
-            } catch (Exception ignored) {}
-        }
-    }
 
     private String generateOtp(int len) {
         String digits = "0123456789";
@@ -428,6 +367,33 @@ public class PaymentController {
     private String otpKey(Long txnId) { return "otp:txn:" + txnId; }
     private String attemptKey(Long txnId) { return "otp:attempt:" + txnId; }
     private String lockKey(String type, String id) { return "lock:" + type + ":" + id; }
+
+    private static String generatePhone(int idx) {
+        String base = String.format("%08d", idx);
+        return "090" + base.substring(base.length() - 8);
+    }
+
+    private static final String[] LAST_NAMES = new String[]{
+            "Nguyễn", "Trần", "Lê", "Phạm", "Hoàng", "Huỳnh", "Phan", "Vũ", "Võ", "Đặng",
+            "Bùi", "Đỗ", "Hồ", "Ngô", "Dương", "Lý"
+    };
+    private static final String[] MID_NAMES = new String[]{
+            "Thị", "Văn", "Hữu", "Ngọc", "Anh", "Quốc", "Gia", "Bảo", "Minh", "Thanh"
+    };
+    private static final String[] GIVEN_NAMES = new String[]{
+            "An", "Bình", "Châu", "Dũng", "Đạt", "Giang", "Hà", "Hạnh", "Hằng", "Hiếu",
+            "Huy", "Hương", "Khanh", "Khánh", "Lan", "Linh", "Long", "Minh", "My", "Nam",
+            "Ngân", "Ngọc", "Nhi", "Phong", "Phúc", "Quân", "Quang", "Quyên", "Sơn", "Tâm",
+            "Tân", "Thảo", "Thắng", "Thịnh", "Thu", "Trang", "Trung", "Tuấn", "Tú", "Tùng",
+            "Uyên", "Vy", "Yến"
+    };
+
+    private static String generateVietnameseName(int seed) {
+        String last = LAST_NAMES[seed % LAST_NAMES.length];
+        String mid = MID_NAMES[(seed / 3) % MID_NAMES.length];
+        String given = GIVEN_NAMES[(seed / 7) % GIVEN_NAMES.length];
+        return last + " " + mid + " " + given;
+    }
 
     public record InitiateRequest(@NotBlank @Pattern(regexp = "^.{8}$") String studentId) {}
     public record ConfirmRequest(Long transactionId, @NotBlank @Pattern(regexp = "^[0-9]{6}$") String otp) {}

@@ -1,0 +1,12 @@
+{
+  "ui": {
+    "bind-addr": "0.0.0.0:8025",
+    "default-view": "html"
+  },
+  "smtp": {
+    "bind-addr": "0.0.0.0:1025"
+  },
+  "storage": {
+    "type": "memory"
+  }
+}

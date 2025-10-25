@@ -32,15 +32,20 @@ services:
       timeout: 5s
       retries: 5
 
-  mailhog:
-    image: mailhog/mailhog:v1.0.1
-    container_name: ibanking_mailhog
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ibanking_mailpit
     ports:
       - "1025:1025" # SMTP
       - "8025:8025" # Web UI
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
 
   backend:
-    image: ibanking-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: ibanking_backend
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ibanking
@@ -48,7 +53,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ibanking
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
-      SPRING_MAIL_HOST: mailhog
+      SPRING_MAIL_HOST: mailpit
       SPRING_MAIL_PORT: 1025
       SERVER_PORT: 8080
     depends_on:
@@ -56,13 +61,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      mailhog:
+      mailpit:
         condition: service_started
     ports:
       - "8080:8080"
 
   frontend:
-    image: ibanking-frontend:latest
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: ibanking_frontend
     environment:
       NEXT_PUBLIC_API_BASE: http://backend:8080

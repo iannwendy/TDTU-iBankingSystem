@@ -13,6 +13,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -23,19 +24,21 @@ public class PaymentService {
     private final StudentTuitionRepository studentTuitionRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final StringRedisTemplate redisTemplate;
+    private final int otpTtlSeconds;
 
     private static final int LOCK_TIMEOUT_SECONDS = 30;
-    private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long LOCK_WAIT_MILLIS = 100;
 
     public PaymentService(CustomerRepository customerRepository,
                          StudentTuitionRepository studentTuitionRepository,
                          PaymentTransactionRepository paymentTransactionRepository,
-                         StringRedisTemplate redisTemplate) {
+                         StringRedisTemplate redisTemplate,
+                         @org.springframework.beans.factory.annotation.Value("${app.otp.ttlSeconds}") int otpTtlSeconds) {
         this.customerRepository = customerRepository;
         this.studentTuitionRepository = studentTuitionRepository;
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.redisTemplate = redisTemplate;
+        this.otpTtlSeconds = otpTtlSeconds;
     }
 
     /**
@@ -185,4 +188,32 @@ public class PaymentService {
         // This method can be called periodically to clean up expired locks
         // Implementation depends on your specific requirements
     }
+
+    /**
+     * Process expired OTP transactions - mark them as FAILED
+     * This method should be called periodically to clean up expired transactions
+     */
+    @Transactional
+    public void processExpiredOtpTransactions() {
+        // Find all PENDING_OTP transactions that are older than OTP TTL
+        OffsetDateTime cutoffTime = OffsetDateTime.now().minusSeconds(otpTtlSeconds);
+        List<PaymentTransaction> expiredTransactions = paymentTransactionRepository
+                .findByStatusAndCreatedAtBefore(PaymentTransaction.Status.PENDING_OTP, cutoffTime);
+        
+        for (PaymentTransaction transaction : expiredTransactions) {
+            // OTP has expired based on time, mark transaction as FAILED
+            transaction.setStatus(PaymentTransaction.Status.FAILED);
+            transaction.setCompletedAt(OffsetDateTime.now());
+            paymentTransactionRepository.save(transaction);
+            
+            // Clean up any remaining Redis keys
+            String otpKey = "otp:txn:" + transaction.getId();
+            String attemptKey = "otp:attempt:" + transaction.getId();
+            redisTemplate.delete(otpKey);
+            redisTemplate.delete(attemptKey);
+            
+            System.out.println("Marked expired transaction " + transaction.getId() + " as FAILED");
+        }
+    }
+
 }

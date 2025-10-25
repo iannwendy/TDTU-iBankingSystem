@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { X, RefreshCw, Clock } from "lucide-react";
+import { X, RefreshCw, Clock, Minimize2, Maximize2 } from "lucide-react";
 
 interface OtpPopupProps {
   isOpen: boolean;
@@ -9,9 +9,12 @@ interface OtpPopupProps {
   onResend: () => void;
   transactionId: number;
   ttlSeconds: number;
+  isMinimized?: boolean;
+  onMinimize?: () => void;
+  onMaximize?: () => void;
 }
 
-export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transactionId, ttlSeconds }: OtpPopupProps) {
+export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transactionId, ttlSeconds, isMinimized = false, onMinimize, onMaximize }: OtpPopupProps) {
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [timeLeft, setTimeLeft] = useState(ttlSeconds);
   const [isResending, setIsResending] = useState(false);
@@ -100,18 +103,43 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
 
   if (!isOpen) return null;
 
+  // Minimized state - show small floating button
+  if (isMinimized) {
+    return (
+      <div className="fixed bottom-6 right-6 z-50">
+        <button
+          onClick={onMaximize}
+          className="bg-brand hover:bg-brand/90 text-white rounded-full p-4 shadow-lg transition-all hover:scale-105 flex items-center gap-2"
+        >
+          <Maximize2 className="size-5" />
+          <span className="text-sm font-medium">OTP ({formatTime(timeLeft)})</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
       <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-semibold text-white">OTP Verification</h3>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            <X className="size-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onMinimize}
+              className="text-gray-400 hover:text-white transition-colors"
+              title="Thu nhỏ"
+            >
+              <Minimize2 className="size-5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-white transition-colors"
+              title="Đóng"
+            >
+              <X className="size-5" />
+            </button>
+          </div>
         </div>
 
         {/* Transaction Info */}

@@ -19,6 +19,7 @@ export default function Page() {
   const [transactionId, setTransactionId] = useState<number | null>(null);
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [otpPopupOpen, setOtpPopupOpen] = useState(false);
+  const [otpPopupMinimized, setOtpPopupMinimized] = useState(false);
   const [otpTtlSeconds, setOtpTtlSeconds] = useState(120);
   const [history, setHistory] = useState<any[] | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -70,6 +71,7 @@ export default function Page() {
     setTransactionId(null);
     setOtp(["", "", "", "", "", ""]);
     setOtpPopupOpen(false);
+    setOtpPopupMinimized(false);
     setAgreeTerms(false);
     setShowTerms(false);
     try { localStorage.setItem("auth", JSON.stringify({ token: nextToken, me: nextMe })); } catch {}
@@ -87,6 +89,7 @@ export default function Page() {
     setAgreeTerms(false);
     setShowTerms(false);
     setOtpPopupOpen(false);
+    setOtpPopupMinimized(false);
     try { localStorage.removeItem("auth"); } catch {}
     toast.success("Đã đăng xuất");
   }
@@ -157,6 +160,7 @@ export default function Page() {
       setOtp(["", "", "", "", "", ""]);
       setTransactionId(null);
       setOtpPopupOpen(false);
+      setOtpPopupMinimized(false);
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "OTP sai");
     }
@@ -185,6 +189,19 @@ export default function Page() {
       toast.error(e?.response?.data?.message || "Không thể gửi lại OTP");
       return Promise.reject(e);
     }
+  }
+
+  function minimizeOtpPopup() {
+    setOtpPopupMinimized(true);
+  }
+
+  function maximizeOtpPopup() {
+    setOtpPopupMinimized(false);
+  }
+
+  function closeOtpPopup() {
+    setOtpPopupOpen(false);
+    setOtpPopupMinimized(false);
   }
 
   return (
@@ -274,7 +291,7 @@ export default function Page() {
                 </div>
                 <div className="flex items-center justify-between mb-4 text-white/90">
                   <div>Remaining balance</div>
-                  <b>{formatVND(Math.max(0, Number(me.balance) - Number(tuition.amount || 0)))}</b>
+                  <b>{formatVND(Math.max(0, Number(me.balance) - Number(tuition.amount || 0)))} </b>
                 </div>
                 {Number(tuition.amount) > Number(me.balance) && !tuition.paid && (
                   <div className="mb-4 text-amber-400">Số dư không đủ để thanh toán học phí</div>
@@ -350,11 +367,14 @@ export default function Page() {
       {/* OTP Popup */}
       <OtpPopup
         isOpen={otpPopupOpen}
-        onClose={() => setOtpPopupOpen(false)}
+        onClose={closeOtpPopup}
         onSubmit={submitOtp}
         onResend={resendOtp}
         transactionId={transactionId || 0}
         ttlSeconds={otpTtlSeconds}
+        isMinimized={otpPopupMinimized}
+        onMinimize={minimizeOtpPopup}
+        onMaximize={maximizeOtpPopup}
       />
     </div>
   );
