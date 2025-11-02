@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { X, RefreshCw, Clock, Minimize2, Maximize2 } from "lucide-react";
+import { RefreshCw, Clock, Minimize2, Maximize2 } from "lucide-react";
 
 interface OtpPopupProps {
   isOpen: boolean;
@@ -131,13 +131,6 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
               title="Thu nhỏ"
             >
               <Minimize2 className="size-5" />
-            </button>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-white transition-colors"
-              title="Đóng"
-            >
-              <X className="size-5" />
             </button>
           </div>
         </div>
