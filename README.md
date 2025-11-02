@@ -137,7 +137,7 @@ Environment variable: `NEXT_PUBLIC_API_BASE` (default: `http://localhost:8080`)
 
 ### Postman Collection
 
-Import `iBanking_Postman_Collection.json` to test all endpoints.
+Import `docs/iBanking_Postman_Collection.json` to test all endpoints.
 
 ### Manual Testing
 
@@ -197,8 +197,8 @@ All entities use `@Version` for optimistic locking.
 
 ## Documentation
 
-- **Concurrency Details**: See `CONCURRENCY_AND_SECURITY_EXPLAINED.md`
-- **API Collection**: `iBanking_Postman_Collection.json`
+- **Concurrency Details**: See `docs/CONCURRENCY_AND_SECURITY_EXPLAINED.md`
+- **API Collection**: `docs/iBanking_Postman_Collection.json`
 
 ## License
 
