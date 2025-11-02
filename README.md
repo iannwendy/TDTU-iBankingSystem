@@ -2,7 +2,7 @@
 
 A secure online tuition payment system built with Spring Boot (Java 21) and Next.js (TypeScript), featuring OTP email verification, distributed locking, and optimistic concurrency control.
 
-## ✨ Features
+## Features
 
 - **Authentication**: JWT-based authentication with Spring Security
 - **OTP Verification**: 6-digit OTP via email with 120-second expiration
@@ -14,7 +14,7 @@ A secure online tuition payment system built with Spring Boot (Java 21) and Next
 - **Email Notifications**: HTML email templates for OTP and payment confirmation
 - **Modern UI**: Responsive dark theme with OTP popup and real-time feedback
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 backend/          # Spring Boot REST API (Java 21)
@@ -29,7 +29,7 @@ docker-compose.yml # Multi-container setup
 - **Security**: JWT, Spring Security, CORS
 - **Email**: JavaMailSender (Gmail SMTP + MailPit for testing)
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -74,7 +74,7 @@ npm install
 npm run dev
 ```
 
-## 📡 API Endpoints
+## API Endpoints
 
 ### Authentication
 - `POST /api/auth/login` - Login and get JWT token
@@ -89,7 +89,7 @@ npm run dev
 - `POST /api/payment/resend-otp` - Resend OTP
 - `GET /api/payment/history` - Get payment history
 
-## 🔄 Payment Flow
+## Payment Flow
 
 1. **Login** → Get JWT token
 2. **Lookup Tuition** → Search by student ID
@@ -98,7 +98,7 @@ npm run dev
 5. **Confirm** → Process payment and update balance
 6. **Confirmation Email** → Receive success notification
 
-## 🔒 Security Features
+## Security Features
 
 ### Distributed Locking
 - Redis-based locks prevent concurrent payment requests
@@ -115,7 +115,7 @@ npm run dev
 - Atomic payment processing (all-or-nothing)
 - Automatic rollback on errors
 
-## ⚙️ Configuration
+## Configuration
 
 ### Backend (`application.yml`)
 
@@ -133,7 +133,7 @@ app:
 
 Environment variable: `NEXT_PUBLIC_API_BASE` (default: `http://localhost:8080`)
 
-## 🧪 Testing
+## Testing
 
 ### Postman Collection
 
@@ -157,7 +157,7 @@ curl -X POST http://localhost:8080/api/payment/initiate \
   -d '{"studentId": "523H0054"}'
 ```
 
-## 📊 Database Schema
+## Database Schema
 
 - **customers**: User accounts with balance and version
 - **student_tuition**: Tuition records with paid status
@@ -165,7 +165,7 @@ curl -X POST http://localhost:8080/api/payment/initiate \
 
 All entities use `@Version` for optimistic locking.
 
-## 🐳 Docker Services
+## Docker Services
 
 - **backend**: Spring Boot application (port 8080)
 - **frontend**: Next.js application (port 3000)
@@ -173,14 +173,14 @@ All entities use `@Version` for optimistic locking.
 - **redis**: Redis cache (port 6379)
 - **mailpit**: Email testing service (SMTP: 1025, UI: 8025)
 
-## 📝 Notes
+## Notes
 
 - OTP is stored in Redis with TTL
 - Payment transactions use distributed locks to prevent duplicates
 - All payment operations are wrapped in serializable transactions
 - Email sent to both Gmail (real) and MailPit (testing)
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 **OTP not received:**
 - Check MailPit UI: http://localhost:8025
@@ -195,15 +195,15 @@ All entities use `@Version` for optimistic locking.
 - Check Redis connection
 - Monitor lock keys: `docker exec ibanking_redis redis-cli KEYS "lock:*"`
 
-## 📚 Documentation
+## Documentation
 
 - **Concurrency Details**: See `CONCURRENCY_AND_SECURITY_EXPLAINED.md`
 - **API Collection**: `iBanking_Postman_Collection.json`
 
-## 📄 License
+## License
 
 MIT License
 
-## 👤 Author
+## Author
 
 Bao Minh Nguyen - [iannwendy](https://github.com/iannwendy)
