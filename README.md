@@ -1,316 +1,209 @@
 # iBanking Tuition Payment System
 
-Hệ thống thanh toán học phí trực tuyến với xác thực OTP qua email, được xây dựng bằng Spring Boot và Next.js.
+A secure online tuition payment system built with Spring Boot (Java 21) and Next.js (TypeScript), featuring OTP email verification, distributed locking, and optimistic concurrency control.
 
-## 🚀 Tính năng chính
+## ✨ Features
 
-### 🔐 Xác thực và Bảo mật
-- Đăng nhập bằng username/password
-- JWT token authentication
-- Xác thực giao dịch bằng OTP 6 chữ số
-- OTP có thời hạn 120 giây (2 phút)
-- Giới hạn số lần nhập OTP sai (5 lần)
+- **Authentication**: JWT-based authentication with Spring Security
+- **OTP Verification**: 6-digit OTP via email with 120-second expiration
+- **Payment Processing**: Secure payment transactions with balance validation
+- **Concurrency Control**: 
+  - Distributed locking with Redis (30s timeout, exponential backoff retry)
+  - Optimistic locking with JPA `@Version` annotation
+  - Serializable transaction isolation for data consistency
+- **Email Notifications**: HTML email templates for OTP and payment confirmation
+- **Modern UI**: Responsive dark theme with OTP popup and real-time feedback
 
-### 💳 Quản lý Giao dịch
-- Tìm kiếm học phí theo mã số sinh viên
-- Kiểm tra số dư tài khoản
-- Xử lý thanh toán học phí
-- Lịch sử giao dịch chi tiết
-- Trạng thái giao dịch real-time
-
-### 📧 Thông báo Email
-- Email OTP xác thực giao dịch
-- Email xác nhận giao dịch thành công
-- Hỗ trợ HTML email đẹp mắt
-- Fallback email text đơn giản
-
-### 🎨 Giao diện người dùng
-- Responsive design cho mobile và desktop
-- Dark theme hiện đại
-- OTP popup với countdown timer
-- Auto-focus và paste support cho OTP input
-- Toast notifications
-
-## 🏗️ Cấu trúc dự án
+## 🏗️ Architecture
 
 ```
-SOA_iBankingSystem/
-├── backend/                    # Spring Boot Backend (Java 21)
-│   ├── src/main/java/
-│   │   └── com/ibanking/tuition/
-│   │       ├── auth/          # Authentication & Authorization
-│   │       ├── config/        # Configuration & Security
-│   │       ├── payment/       # Payment processing & OTP
-│   │       ├── tuition/       # Tuition management
-│   │       ├── user/          # User management
-│   │       └── security/      # JWT & Security
-│   ├── src/main/resources/
-│   │   └── application.yml    # Configuration
-│   ├── Dockerfile             # Multi-stage Docker build
-│   ├── pom.xml                # Maven configuration
-│   ├── mvnw                   # Maven wrapper
-│   └── .mvn/                  # Maven wrapper config
-├── frontend/                   # Next.js Frontend
-│   ├── app/
-│   │   ├── components/        # React components
-│   │   │   └── OtpPopup.tsx  # OTP verification popup
-│   │   ├── page.tsx          # Main application page
-│   │   ├── layout.tsx        # App layout
-│   │   └── globals.css       # Global styles
-│   ├── package.json           # Node.js dependencies
-│   ├── Dockerfile             # Next.js Docker build
-│   ├── tailwind.config.ts     # Tailwind CSS config
-│   └── tsconfig.json          # TypeScript config
-├── docker-compose.yml          # Docker services orchestration
-├── .gitignore                 # Git ignore rules
-└── README.md                  # Project documentation
+backend/          # Spring Boot REST API (Java 21)
+frontend/         # Next.js application (TypeScript)
+docker-compose.yml # Multi-container setup
 ```
 
-## 🛠️ Cài đặt và Chạy
+### Tech Stack
 
-### Yêu cầu hệ thống
-- **Java 21** (OpenJDK 21)
-- **Node.js 18+** và npm
-- **Docker & Docker Compose**
-- **Git**
+- **Backend**: Spring Boot 3.3.2, Java 21, PostgreSQL, Redis
+- **Frontend**: Next.js 14, React 18, Tailwind CSS
+- **Security**: JWT, Spring Security, CORS
+- **Email**: JavaMailSender (Gmail SMTP + MailPit for testing)
 
-### 🐳 Chạy bằng Docker (Khuyến nghị)
+## 🚀 Quick Start
 
-#### 1. Clone repository
+### Prerequisites
+
+- Docker & Docker Compose
+- Java 21 (if running locally)
+- Node.js 18+ (if running locally)
+
+### Run with Docker (Recommended)
+
 ```bash
-git clone https://github.com/iannwendy/TDTU-iBankingSystem.git
-cd TDTU-iBankingSystem
-```
+# Clone repository
+git clone <repository-url>
+cd SOA_iBankingSystem
 
-#### 2. Khởi động toàn bộ hệ thống
-```bash
+# Start all services
 docker-compose up -d
-```
 
-#### 3. Kiểm tra trạng thái
-```bash
+# Check status
 docker-compose ps
 ```
 
-#### 4. Truy cập ứng dụng
+### Access Services
+
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8080
-- **Database**: localhost:55432 (PostgreSQL)
-- **Cache**: localhost:6379 (Redis)
-- **Email UI**: http://localhost:8025 (MailHog)
+- **MailPit UI**: http://localhost:8025 (for testing emails)
+- **PostgreSQL**: localhost:55432
+- **Redis**: localhost:6379
 
-### 🔧 Chạy thủ công
+### Local Development
 
-#### 1. Backend (Spring Boot)
+**Backend:**
 ```bash
 cd backend
-./mvnw clean install
 ./mvnw spring-boot:run
 ```
 
-#### 2. Frontend (Next.js)
+**Frontend:**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-#### 3. Database (PostgreSQL)
-```bash
-docker run -d \
-  --name postgres \
-  -e POSTGRES_DB=ibanking \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=password \
-  -p 5432:5432 \
-  postgres:15
-```
-
 ## 📡 API Endpoints
 
 ### Authentication
-- `POST /api/auth/login` - Đăng nhập
-- `GET /api/auth/me` - Lấy thông tin user
-
-### Payment
-- `POST /api/payment/initiate` - Khởi tạo giao dịch & gửi OTP
-- `POST /api/payment/confirm` - Xác nhận OTP & hoàn tất giao dịch
-- `POST /api/payment/resend-otp` - Gửi lại OTP mới
-- `GET /api/payment/history` - Lịch sử giao dịch
+- `POST /api/auth/login` - Login and get JWT token
+- `GET /api/auth/me` - Get current user info
 
 ### Tuition
-- `GET /api/tuition/lookup` - Tìm kiếm học phí theo MSSV
+- `GET /api/tuition/lookup?studentId={mssv}` - Lookup tuition by student ID (public)
 
-## 🔄 Quy trình giao dịch
+### Payment
+- `POST /api/payment/initiate` - Initiate payment and send OTP email
+- `POST /api/payment/confirm` - Confirm payment with OTP
+- `POST /api/payment/resend-otp` - Resend OTP
+- `GET /api/payment/history` - Get payment history
 
-1. **Đăng nhập** - User đăng nhập vào hệ thống
-2. **Tìm kiếm học phí** - Nhập mã số sinh viên để tra cứu
-3. **Xác nhận giao dịch** - Kiểm tra thông tin và bấm xác nhận
-4. **Xác thực OTP** - Nhập mã OTP từ email (120s countdown)
-5. **Hoàn tất** - Hệ thống xử lý thanh toán và gửi email xác nhận
+## 🔄 Payment Flow
 
-## 🔐 Tính năng OTP
+1. **Login** → Get JWT token
+2. **Lookup Tuition** → Search by student ID
+3. **Initiate Payment** → System sends OTP to email
+4. **Enter OTP** → Verify with 6-digit code (120s expiry)
+5. **Confirm** → Process payment and update balance
+6. **Confirmation Email** → Receive success notification
 
-### Bảo mật
-- OTP 6 chữ số ngẫu nhiên
-- Thời hạn 120 giây
-- Giới hạn 5 lần nhập sai
-- Mỗi giao dịch có OTP riêng biệt
+## 🔒 Security Features
 
-### Giao diện
-- Popup modal riêng biệt
-- Countdown timer hiển thị thời gian còn lại
-- Auto-focus giữa các input
-- Hỗ trợ paste OTP
-- Nút gửi lại OTP mới
+### Distributed Locking
+- Redis-based locks prevent concurrent payment requests
+- 30-second timeout with automatic expiration
+- Retry mechanism with exponential backoff (3 attempts)
 
-## ⚙️ Cấu hình
+### Optimistic Locking
+- JPA `@Version` annotation prevents lost updates
+- Automatic conflict detection with `ObjectOptimisticLockingFailureException`
+- Used in Customer, PaymentTransaction, and StudentTuition entities
 
-### Backend (application.yml)
+### Transaction Isolation
+- `SERIALIZABLE` isolation level ensures ACID properties
+- Atomic payment processing (all-or-nothing)
+- Automatic rollback on errors
+
+## ⚙️ Configuration
+
+### Backend (`application.yml`)
+
 ```yaml
 app:
   otp:
-    ttlSeconds: 120      # Thời hạn OTP (giây)
-    length: 6            # Độ dài OTP
-    maxAttempts: 5       # Số lần nhập sai tối đa
+    ttlSeconds: 120      # OTP expiration
+    length: 6            # OTP digits
+    maxAttempts: 5        # Max failed attempts
   security:
-    jwtExpirationMinutes: 60  # Thời hạn JWT token
+    jwtExpirationMinutes: 60
 ```
 
 ### Frontend
-- API base URL: `NEXT_PUBLIC_API_BASE`
-- Default: `http://localhost:8080`
 
-## 🐳 Docker Configuration
-
-### Backend Dockerfile
-- Multi-stage build với Maven 3.9.6 và Java 21
-- Runtime image sử dụng Eclipse Temurin 21 JRE
-- Expose port 8080
-
-### Frontend Dockerfile
-- Multi-stage build với Node.js 18
-- Production build với Next.js
-- Expose port 3000
-
-### Docker Compose Services
-- **Backend**: Spring Boot application
-- **Frontend**: Next.js application  
-- **PostgreSQL**: Database
-- **Redis**: Cache layer
-- **MailHog**: Email testing service
-
-## 🔒 Bảo mật
-
-- JWT token authentication
-- CORS configuration
-- Input validation và sanitization
-- Rate limiting cho OTP attempts
-- Database transaction locks
-- Secure email templates
-
-## 📊 Monitoring & Logging
-
-- Console logging cho email failures
-- Transaction status tracking
-- OTP attempt monitoring
-- Error handling với fallback
-- Docker container health checks
-
-## 🚨 Troubleshooting
-
-### OTP không nhận được
-- Kiểm tra cấu hình SMTP
-- Xem logs backend: `docker-compose logs backend`
-- Kiểm tra MailHog UI: http://localhost:8025
-
-### Giao dịch thất bại
-- Kiểm tra số dư tài khoản
-- Xác nhận thông tin sinh viên
-- Kiểm tra trạng thái giao dịch
-
-### Performance issues
-- Kiểm tra Redis connection
-- Monitor database performance
-- Kiểm tra network latency
-
-### Docker issues
-```bash
-# Restart services
-docker-compose restart
-
-# Rebuild images
-docker-compose build --no-cache
-
-# View logs
-docker-compose logs -f [service_name]
-```
+Environment variable: `NEXT_PUBLIC_API_BASE` (default: `http://localhost:8080`)
 
 ## 🧪 Testing
 
-### Backend Testing
+### Postman Collection
+
+Import `iBanking_Postman_Collection.json` to test all endpoints.
+
+### Manual Testing
+
 ```bash
-cd backend
-./mvnw test
+# Login
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "523H0054", "password": "pass123"}'
+
+# Lookup tuition (public endpoint)
+curl http://localhost:8080/api/tuition/lookup?studentId=523H0054
+
+# Initiate payment (requires JWT token)
+curl -X POST http://localhost:8080/api/payment/initiate \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json" \
+  -d '{"studentId": "523H0054"}'
 ```
 
-### Frontend Testing
-```bash
-cd frontend
-npm test
-```
+## 📊 Database Schema
 
-### Integration Testing
-```bash
-docker-compose -f docker-compose.test.yml up --abort-on-container-exit
-```
+- **customers**: User accounts with balance and version
+- **student_tuition**: Tuition records with paid status
+- **payment_transactions**: Transaction history with status tracking
 
-## 📈 Performance
+All entities use `@Version` for optimistic locking.
 
-- **Backend**: Java 21 với Spring Boot 3.x
-- **Frontend**: Next.js 14 với React 18
-- **Database**: PostgreSQL với connection pooling
-- **Cache**: Redis cho session và OTP storage
-- **Build**: Multi-stage Docker builds tối ưu
+## 🐳 Docker Services
 
-## 🔄 CI/CD
+- **backend**: Spring Boot application (port 8080)
+- **frontend**: Next.js application (port 3000)
+- **postgres**: PostgreSQL database (port 55432)
+- **redis**: Redis cache (port 6379)
+- **mailpit**: Email testing service (SMTP: 1025, UI: 8025)
 
-- **Build**: Maven wrapper + npm scripts
-- **Containerization**: Multi-stage Docker builds
-- **Orchestration**: Docker Compose
-- **Deployment**: Ready for Kubernetes/Cloud deployment
+## 📝 Notes
 
-## 🤝 Đóng góp
+- OTP is stored in Redis with TTL
+- Payment transactions use distributed locks to prevent duplicates
+- All payment operations are wrapped in serializable transactions
+- Email sent to both Gmail (real) and MailPit (testing)
 
-1. Fork repository
-2. Tạo feature branch: `git checkout -b feature/amazing-feature`
-3. Commit changes: `git commit -m 'Add amazing feature'`
-4. Push to branch: `git push origin feature/amazing-feature`
-5. Tạo Pull Request
+## 🚨 Troubleshooting
 
-## 📝 Changelog
+**OTP not received:**
+- Check MailPit UI: http://localhost:8025
+- View backend logs: `docker-compose logs backend`
 
-### v1.0.0 (Current)
-- ✅ Spring Boot backend với Java 21
-- ✅ Next.js frontend với TypeScript
-- ✅ JWT authentication
-- ✅ OTP email verification
-- ✅ Docker deployment
-- ✅ PostgreSQL + Redis
-- ✅ Maven wrapper
-- ✅ Multi-stage Docker builds
+**Payment fails:**
+- Verify account balance
+- Check transaction status in history
+- Ensure student ID exists and tuition is unpaid
+
+**Concurrency issues:**
+- Check Redis connection
+- Monitor lock keys: `docker exec ibanking_redis redis-cli KEYS "lock:*"`
+
+## 📚 Documentation
+
+- **Concurrency Details**: See `CONCURRENCY_AND_SECURITY_EXPLAINED.md`
+- **API Collection**: `iBanking_Postman_Collection.json`
 
 ## 📄 License
 
-MIT License - xem file LICENSE để biết thêm chi tiết.
+MIT License
 
-## 👥 Tác giả
+## 👤 Author
 
-- **Bao Minh Nguyen** - [iannwendy](https://github.com/iannwendy)
-
-## 🙏 Cảm ơn
-
-- Spring Boot team
-- Next.js team
-- Docker community
-- Open source contributors
+Bao Minh Nguyen - [iannwendy](https://github.com/iannwendy)
