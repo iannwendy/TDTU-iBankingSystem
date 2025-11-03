@@ -18,12 +18,14 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [timeLeft, setTimeLeft] = useState(ttlSeconds);
   const [isResending, setIsResending] = useState(false);
+  const [resendCooldownLeft, setResendCooldownLeft] = useState(0);
 
   useEffect(() => {
     if (!isOpen) return;
     
     setTimeLeft(ttlSeconds);
     setOtp(["", "", "", "", "", ""]);
+    setResendCooldownLeft(0);
     
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -37,6 +39,14 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
 
     return () => clearInterval(timer);
   }, [isOpen, ttlSeconds]);
+
+  useEffect(() => {
+    if (!isOpen || resendCooldownLeft <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldownLeft((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen, resendCooldownLeft]);
 
   useEffect(() => {
     if (timeLeft === 0) {
@@ -91,11 +101,13 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
   };
 
   const handleResend = async () => {
+    if (resendCooldownLeft > 0) return;
     setIsResending(true);
     try {
       await onResend();
       setTimeLeft(ttlSeconds);
       setOtp(["", "", "", "", "", ""]);
+      setResendCooldownLeft(30);
     } finally {
       setIsResending(false);
     }
@@ -177,7 +189,7 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
         <div className="flex justify-center">
           <button
             onClick={handleResend}
-            disabled={isResending}
+            disabled={isResending || resendCooldownLeft > 0}
             className="btn bg-white/10 hover:bg-white/20 text-white disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isResending ? (
@@ -194,9 +206,15 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
           </button>
         </div>
 
-        {/* Warning */}
+        {/* Warnings */}
+        <div className="mt-4 text-center text-amber-400 text-sm">
+          You can resend OTP up to 3 times. Please wait at least 30 seconds between resends.
+          {resendCooldownLeft > 0 && (
+            <div className="mt-1">Please wait {resendCooldownLeft}s before resending.</div>
+          )}
+        </div>
         {timeLeft === 0 && (
-          <div className="mt-4 text-center text-amber-400 text-sm">
+          <div className="mt-2 text-center text-amber-400 text-sm">
             OTP has expired. Please click "Resend OTP" to get a new code.
           </div>
         )}

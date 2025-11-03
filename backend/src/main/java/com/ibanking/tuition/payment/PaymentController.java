@@ -14,9 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.mail.javamail.JavaMailSender;
-import jakarta.mail.internet.MimeMessage;
-import org.springframework.mail.javamail.MimeMessageHelper;
+ 
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
@@ -34,7 +32,7 @@ public class PaymentController {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final PaymentService paymentService;
     private final StringRedisTemplate redisTemplate;
-    private final JavaMailSender mailSender;
+    
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
 
@@ -47,7 +45,6 @@ public class PaymentController {
                            PaymentTransactionRepository paymentTransactionRepository,
                            PaymentService paymentService,
                            StringRedisTemplate redisTemplate, 
-                           JavaMailSender mailSender,
                            PasswordEncoder passwordEncoder,
                            EmailService emailService,
                            @org.springframework.beans.factory.annotation.Value("${app.otp.ttlSeconds}") int otpTtlSeconds, 
@@ -58,7 +55,6 @@ public class PaymentController {
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.paymentService = paymentService;
         this.redisTemplate = redisTemplate;
-        this.mailSender = mailSender;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.otpTtlSeconds = otpTtlSeconds;
@@ -116,8 +112,13 @@ public class PaymentController {
             String otp = generateOtp(otpLength);
             String otpKey = otpKey(txn.getId());
             String attemptKey = attemptKey(txn.getId());
+            String resendCountKey = resendCountKey(txn.getId());
+            String lastResendKey = lastResendKey(txn.getId());
             redisTemplate.opsForValue().set(otpKey, otp, Duration.ofSeconds(otpTtlSeconds));
             redisTemplate.opsForValue().setIfAbsent(attemptKey, "0", Duration.ofSeconds(otpTtlSeconds));
+            // initialize resend counters
+            redisTemplate.opsForValue().setIfAbsent(resendCountKey, "0", Duration.ofSeconds(otpTtlSeconds));
+            redisTemplate.opsForValue().set(lastResendKey, String.valueOf(System.currentTimeMillis()), Duration.ofSeconds(otpTtlSeconds));
 
             // Send OTP email
             emailService.sendOtpEmail(payer, otp, txn, t);
@@ -206,16 +207,62 @@ public class PaymentController {
             return ResponseEntity.status(403).body(Map.of("message", "Unauthorized"));
         }
 
+        // Enforce resend limits: max 3 resends, at least 30s between resends
+        String resendCountKey = resendCountKey(txn.getId());
+        String lastResendKey = lastResendKey(txn.getId());
+
+        String countStr = redisTemplate.opsForValue().get(resendCountKey);
+        long resendCount = 0L;
+        if (countStr != null) {
+            try { resendCount = Long.parseLong(countStr); } catch (NumberFormatException ignored) {}
+        }
+        if (resendCount >= 3) {
+            // Fail transaction immediately
+            txn.setStatus(PaymentTransaction.Status.FAILED);
+            txn.setCompletedAt(OffsetDateTime.now());
+            paymentTransactionRepository.save(txn);
+
+            String otpKeyToDel = otpKey(txn.getId());
+            String attemptKeyToDel = attemptKey(txn.getId());
+            redisTemplate.delete(otpKeyToDel);
+            redisTemplate.delete(attemptKeyToDel);
+            redisTemplate.delete(resendCountKey);
+            redisTemplate.delete(lastResendKey);
+
+            return ResponseEntity.status(429).body(Map.of("message", "Exceeded maximum OTP resends. Transaction failed."));
+        }
+
+        String lastTsStr = redisTemplate.opsForValue().get(lastResendKey);
+        long nowMs = System.currentTimeMillis();
+        if (lastTsStr != null) {
+            try {
+                long lastMs = Long.parseLong(lastTsStr);
+                long diffSec = (nowMs - lastMs) / 1000L;
+                if (diffSec < 30) {
+                    return ResponseEntity.status(429).body(Map.of(
+                            "message", "Please wait before resending OTP",
+                            "retryAfterSeconds", 30 - diffSec
+                    ));
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+
         // Generate new OTP
         String otp = generateOtp(otpLength);
         String otpKey = otpKey(txn.getId());
         String attemptKey = attemptKey(txn.getId());
         
-        // Reset OTP and attempts
+        // Reset OTP and attempts (do not reset resend counters)
         redisTemplate.delete(otpKey);
         redisTemplate.delete(attemptKey);
         redisTemplate.opsForValue().set(otpKey, otp, Duration.ofSeconds(otpTtlSeconds));
         redisTemplate.opsForValue().setIfAbsent(attemptKey, "0", Duration.ofSeconds(otpTtlSeconds));
+
+        // Increment resend count and update last resend timestamp; align TTL to OTP TTL
+        Long newCount = redisTemplate.opsForValue().increment(resendCountKey);
+        if (newCount == null) newCount = 1L;
+        redisTemplate.expire(resendCountKey, Duration.ofSeconds(otpTtlSeconds));
+        redisTemplate.opsForValue().set(lastResendKey, String.valueOf(nowMs), Duration.ofSeconds(otpTtlSeconds));
         
         // Reset transaction status to PENDING_OTP if it was EXPIRED
         if (txn.getStatus() == PaymentTransaction.Status.EXPIRED) {
@@ -226,7 +273,12 @@ public class PaymentController {
         // Send new OTP email
         emailService.sendOtpEmail(payer, otp, txn, studentTuitionRepository.findByStudentIdAndSemester(txn.getStudentId(), txn.getSemester()).orElseThrow());
 
-        return ResponseEntity.ok(Map.of("message", "New OTP sent", "ttlSeconds", otpTtlSeconds));
+        return ResponseEntity.ok(Map.of(
+                "message", "New OTP sent",
+                "ttlSeconds", otpTtlSeconds,
+                "resendCount", newCount,
+                "resendRemaining", Math.max(0, 3 - newCount)
+        ));
     }
 
     @GetMapping("/history")
@@ -309,6 +361,8 @@ public class PaymentController {
 
     private String otpKey(Long txnId) { return "otp:txn:" + txnId; }
     private String attemptKey(Long txnId) { return "otp:attempt:" + txnId; }
+    private String resendCountKey(Long txnId) { return "otp:resendCount:" + txnId; }
+    private String lastResendKey(Long txnId) { return "otp:lastResendAt:" + txnId; }
     private String lockKey(String type, String id) { return "lock:" + type + ":" + id; }
 
     private static String generatePhone(int idx) {
