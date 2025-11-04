@@ -10,7 +10,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+# Disable SWC to avoid ARM64 binary issues, use Babel instead
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build || (export NODE_OPTIONS="--no-experimental-fetch" && npm run build)
 
 FROM node:20-alpine AS runner
 WORKDIR /app

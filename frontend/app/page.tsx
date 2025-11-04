@@ -40,6 +40,36 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentId, token]);
 
+  // Poll transaction status to auto-unlock when transaction expires/fails
+  useEffect(() => {
+    if (!transactionId || !token) return;
+    
+    const checkTransactionStatus = async () => {
+      try {
+        const res = await axios.get(`${API}/api/payment/history`, { headers: { Authorization: `Bearer ${token}` } });
+        const txn = res.data?.find((t: any) => t.id === transactionId);
+        
+        if (!txn || (txn.status !== 'PENDING_OTP' && txn.status !== 'PROCESSING')) {
+          // Transaction is no longer pending (expired, failed, or completed)
+          setTransactionId(null);
+          setOtpPopupOpen(false);
+          setOtpPopupMinimized(false);
+          setOtp(["", "", "", "", "", ""]);
+          if (txn?.status === 'FAILED' || txn?.status === 'EXPIRED') {
+            toast.error("The pending transaction has expired or failed. You can now create a new transaction.");
+          }
+        }
+      } catch (err) {
+        console.log("Failed to check transaction status:", err);
+      }
+    };
+    
+    // Check every 5 seconds
+    const interval = setInterval(checkTransactionStatus, 5000);
+    
+    return () => clearInterval(interval);
+  }, [transactionId, token]);
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem("auth");
@@ -91,7 +121,7 @@ export default function Page() {
     setOtpPopupOpen(false);
     setOtpPopupMinimized(false);
     try { localStorage.removeItem("auth"); } catch {}
-    toast.success("Đã đăng xuất");
+    toast.success("Logged out successfully");
   }
 
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
@@ -100,8 +130,35 @@ export default function Page() {
     try {
       const res = await axios.post(`${API}/api/auth/login`, { username, password });
       const nextMe = { fullName: res.data.fullName, phone: res.data.phone, email: res.data.email, balance: res.data.balance };
+      
+      // If there's a pending transaction, restore it
+      if (res.data.pendingTransactionId) {
+        setTransactionId(res.data.pendingTransactionId);
+        setOtpTtlSeconds(120); // Default TTL, will be updated when we check transaction
+        setOtpPopupOpen(true);
+        setOtpPopupMinimized(false);
+        toast.success("Login successful. You have a pending OTP transaction.");
+        
+        // Try to get transaction details to calculate remaining time
+        try {
+          const txnRes = await axios.get(`${API}/api/payment/history`, { headers: { Authorization: `Bearer ${res.data.token}` } });
+          const pendingTxn = txnRes.data?.find((t: any) => t.id === res.data.pendingTransactionId);
+          if (pendingTxn && pendingTxn.createdAt) {
+            const createdAt = new Date(pendingTxn.createdAt);
+            const now = new Date();
+            const elapsed = Math.floor((now.getTime() - createdAt.getTime()) / 1000);
+            const remaining = Math.max(0, 120 - elapsed); // 120s TTL
+            setOtpTtlSeconds(remaining);
+          }
+        } catch (err) {
+          console.log("Could not fetch transaction details:", err);
+        }
+      }
+      
       persistAuth(res.data.token, nextMe);
-      toast.success("Đăng nhập thành công");
+      if (!res.data.pendingTransactionId) {
+        toast.success("Login successful");
+      }
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "Login failed");
     } finally {
@@ -128,11 +185,15 @@ export default function Page() {
           const resendRes = await axios.post(`${API}/api/payment/resend-otp`, { transactionId }, { headers: { Authorization: `Bearer ${token}` } });
           setOtpTtlSeconds(resendRes.data.ttlSeconds);
           setOtpPopupOpen(true);
-          toast.success(`OTP mới đã gửi tới email. Hết hạn sau ${resendRes.data.ttlSeconds}s`);
+          setOtpPopupMinimized(false);
+          toast.success(`New OTP sent to your email. Expires in ${resendRes.data.ttlSeconds}s`);
           return;
         } catch (resendError: any) {
-          // If resend fails, continue with new transaction
-          console.log("Resend failed, creating new transaction:", resendError.response?.data?.message);
+          // If resend fails, show error and restore popup
+          toast.error(resendError?.response?.data?.message || "Failed to resend OTP");
+          setOtpPopupOpen(true);
+          setOtpPopupMinimized(false);
+          return;
         }
       }
       
@@ -141,16 +202,44 @@ export default function Page() {
       setTransactionId(res.data.transactionId);
       setOtpTtlSeconds(res.data.ttlSeconds);
       setOtpPopupOpen(true);
-      toast.success(`OTP đã gửi tới email. Hết hạn sau ${res.data.ttlSeconds}s`);
+      setOtpPopupMinimized(false);
+      toast.success(`OTP sent to your email. Expires in ${res.data.ttlSeconds}s`);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || "Không thể khởi tạo giao dịch");
+      const errorMessage = e?.response?.data?.message || "Failed to initiate transaction";
+      
+      // If backend rejects because of pending transaction, try to restore it
+      if (e?.response?.status === 409 && errorMessage.includes("pending payment transaction")) {
+        // Extract transaction ID from error message (format: "ID: XXX")
+        const match = errorMessage.match(/ID:\s*(\d+)/);
+        if (match) {
+          const existingTxnId = parseInt(match[1], 10);
+          setTransactionId(existingTxnId);
+          setOtpTtlSeconds(120); // Reset to default TTL
+          setOtpPopupOpen(true);
+          setOtpPopupMinimized(false);
+          toast.error("You have a pending OTP transaction. Please complete the current transaction first.");
+          
+          // Try to resend OTP for existing transaction
+          try {
+            const resendRes = await axios.post(`${API}/api/payment/resend-otp`, { transactionId: existingTxnId }, { headers: { Authorization: `Bearer ${token}` } });
+            setOtpTtlSeconds(resendRes.data.ttlSeconds);
+            toast.success(`OTP has been resent to your email. Expires in ${resendRes.data.ttlSeconds}s`);
+          } catch (resendErr: any) {
+            // If resend fails, still show popup but user can manually resend
+            console.log("Failed to auto-resend OTP:", resendErr);
+          }
+          return;
+        }
+      }
+      
+      toast.error(errorMessage);
     }
   }
 
   async function submitOtp(value: string) {
     try {
       const res = await axios.post(`${API}/api/payment/confirm`, { transactionId, otp: value }, { headers: { Authorization: `Bearer ${token}` } });
-      toast.success(res.data.message || "Thanh toán thành công");
+      toast.success(res.data.message || "Payment successful");
       // update local balances and tuition state
       const paidAmount = Number(tuition?.amount || 0);
       const updatedMe = me ? { ...me, balance: Math.max(0, Number(me.balance) - paidAmount) } : me;
@@ -162,7 +251,7 @@ export default function Page() {
       setOtpPopupOpen(false);
       setOtpPopupMinimized(false);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || "OTP sai");
+      toast.error(e?.response?.data?.message || "Invalid OTP");
     }
   }
 
@@ -173,7 +262,7 @@ export default function Page() {
       setHistory(res.data || []);
       setHistoryOpen(true);
     } catch (e: any) {
-      toast.error("Không tải được lịch sử giao dịch");
+      toast.error("Failed to load transaction history");
     } finally {
       setHistoryLoading(false);
     }
@@ -183,10 +272,10 @@ export default function Page() {
     try {
       const res = await axios.post(`${API}/api/payment/resend-otp`, { transactionId }, { headers: { Authorization: `Bearer ${token}` } });
       setOtpTtlSeconds(res.data.ttlSeconds);
-      toast.success(`OTP mới đã gửi tới email. Hết hạn sau ${res.data.ttlSeconds}s`);
+      toast.success(`New OTP sent to your email. Expires in ${res.data.ttlSeconds}s`);
       return Promise.resolve();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || "Không thể gửi lại OTP");
+      toast.error(e?.response?.data?.message || "Failed to resend OTP");
       return Promise.reject(e);
     }
   }
@@ -232,7 +321,7 @@ export default function Page() {
             <input className="input" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
             <input className="input" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
             <button className="btn mt-2" type="submit" disabled={loading}>
-              {loading ? (<><Loader2 className="size-4 mr-2 animate-spin"/>Đang đăng nhập...</>) : (<>Đăng nhập</>)}
+              {loading ? (<><Loader2 className="size-4 mr-2 animate-spin"/>Logging in...</>) : (<>Login</>)}
             </button>
           </div>
         </form>
@@ -257,19 +346,36 @@ export default function Page() {
               <div className="font-medium">Tuition</div>
             </div>
             <div className="flex gap-3">
-              <input className="input" placeholder="MSSV (8 chars)" value={studentId} onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                const v = e.target.value.slice(0, 8);
-                setStudentId(v);
-                if (v.length === 8) lookupTuitionBy(v);
-              }} />
-              <button className="btn" onClick={() => lookupTuitionBy(studentId)}><Send className="size-4 mr-2"/>Lookup</button>
+              <input 
+                className="input" 
+                placeholder="MSSV (8 chars)" 
+                value={studentId} 
+                disabled={!!transactionId}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const v = e.target.value.slice(0, 8);
+                  setStudentId(v);
+                  if (v.length === 8) lookupTuitionBy(v);
+                }} 
+              />
+              <button 
+                className="btn" 
+                disabled={!!transactionId}
+                onClick={() => lookupTuitionBy(studentId)}
+              >
+                <Send className="size-4 mr-2"/>Lookup
+              </button>
             </div>
+            {transactionId && (
+              <div className="mt-2 text-amber-400 text-sm">
+                ⚠️ You have a pending OTP transaction (ID: {transactionId}). Please complete this transaction before creating a new one.
+              </div>
+            )}
             {tuition && (
               <div className="mt-4 grid gap-2 text-white/90">
                 <div className="flex justify-between"><span>Student</span><b>{tuition.studentName}</b></div>
                 <div className="flex justify-between"><span>Semester</span><b>{tuition.semester}</b></div>
                 <div className="flex justify-between"><span>Amount</span><b>{formatVND(tuition.amount)}</b></div>
-                {tuition.paid && <div className="text-emerald-400">Học phí đã thanh toán</div>}
+                {tuition.paid && <div className="text-emerald-400">Tuition has been paid</div>}
               </div>
             )}
           </section>
@@ -294,7 +400,7 @@ export default function Page() {
                   <b>{formatVND(Math.max(0, Number(me.balance) - Number(tuition.amount || 0)))} </b>
                 </div>
                 {Number(tuition.amount) > Number(me.balance) && !tuition.paid && (
-                  <div className="mb-4 text-amber-400">Số dư không đủ để thanh toán học phí</div>
+                  <div className="mb-4 text-amber-400">Insufficient balance to pay tuition</div>
                 )}
                 <div className="mb-3">
                   <label className="inline-flex items-start gap-2 select-none">
@@ -321,7 +427,13 @@ export default function Page() {
                 </div>
               </>
             )}
-            <button className="btn" disabled={!tuition || tuition.paid || Number(tuition.amount) === 0 || Number(tuition.amount) > Number(me.balance) || !agreeTerms} onClick={initiatePayment}>Confirm transaction</button>
+            <button 
+              className="btn" 
+              disabled={!tuition || tuition.paid || Number(tuition.amount) === 0 || Number(tuition.amount) > Number(me.balance) || !agreeTerms || !!transactionId} 
+              onClick={initiatePayment}
+            >
+              {transactionId ? "Waiting for OTP..." : "Confirm transaction"}
+            </button>
           </section>
 
 

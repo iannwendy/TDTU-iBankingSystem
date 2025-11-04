@@ -19,10 +19,12 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
   const [timeLeft, setTimeLeft] = useState(ttlSeconds);
   const [isResending, setIsResending] = useState(false);
   const [resendCooldownLeft, setResendCooldownLeft] = useState(0);
+  const [autoCloseCountdown, setAutoCloseCountdown] = useState(0);
 
   useEffect(() => {
     if (!isOpen) return;
     
+    // Reset timer when popup opens or transaction changes
     setTimeLeft(ttlSeconds);
     setOtp(["", "", "", "", "", ""]);
     setResendCooldownLeft(0);
@@ -38,7 +40,7 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isOpen, ttlSeconds]);
+  }, [isOpen, ttlSeconds, transactionId]);
 
   useEffect(() => {
     if (!isOpen || resendCooldownLeft <= 0) return;
@@ -49,11 +51,26 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
   }, [isOpen, resendCooldownLeft]);
 
   useEffect(() => {
-    if (timeLeft === 0) {
-      // Don't auto-close, let user choose to resend or close manually
-      // The transaction will be marked as expired on backend
+    if (timeLeft === 0 && isMinimized) {
+      // Start auto-close countdown when OTP expires in minimized mode
+      setAutoCloseCountdown(10);
+      const countdown = setInterval(() => {
+        setAutoCloseCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(countdown);
+            onClose();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      
+      return () => clearInterval(countdown);
+    } else if (timeLeft > 0) {
+      // Reset auto-close countdown if timer is reset (e.g., OTP resent)
+      setAutoCloseCountdown(0);
     }
-  }, [timeLeft]);
+  }, [timeLeft, isMinimized, onClose]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -119,13 +136,29 @@ export default function OtpPopup({ isOpen, onClose, onSubmit, onResend, transact
   if (isMinimized) {
     return (
       <div className="fixed bottom-6 right-6 z-50">
-        <button
-          onClick={onMaximize}
-          className="bg-brand hover:bg-brand/90 text-white rounded-full p-4 shadow-lg transition-all hover:scale-105 flex items-center gap-2"
-        >
-          <Maximize2 className="size-5" />
-          <span className="text-sm font-medium">OTP ({formatTime(timeLeft)})</span>
-        </button>
+        <div className="flex flex-col items-end gap-2">
+          {/* Auto-close warning when expired */}
+          {timeLeft === 0 && autoCloseCountdown > 0 && (
+            <div className="bg-amber-500 text-white px-4 py-2 rounded-lg shadow-lg animate-pulse">
+              <div className="text-sm font-medium">OTP Expired</div>
+              <div className="text-xs">Auto-closing in {autoCloseCountdown}s</div>
+            </div>
+          )}
+          
+          <button
+            onClick={onMaximize}
+            className={`rounded-full p-4 shadow-lg transition-all hover:scale-105 flex items-center gap-2 ${
+              timeLeft === 0 
+                ? "bg-red-500 hover:bg-red-600 animate-pulse" 
+                : "bg-brand hover:bg-brand/90"
+            } text-white`}
+          >
+            <Maximize2 className="size-5" />
+            <span className="text-sm font-medium">
+              {timeLeft === 0 ? "OTP Expired" : `OTP (${formatTime(timeLeft)})`}
+            </span>
+          </button>
+        </div>
       </div>
     );
   }

@@ -1,5 +1,7 @@
 package com.ibanking.tuition.auth;
 
+import com.ibanking.tuition.payment.PaymentTransaction;
+import com.ibanking.tuition.payment.PaymentTransactionRepository;
 import com.ibanking.tuition.security.JwtService;
 import com.ibanking.tuition.user.Customer;
 import com.ibanking.tuition.user.CustomerRepository;
@@ -9,12 +11,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import org.springframework.security.core.Authentication;
 
@@ -27,13 +29,15 @@ public class AuthController {
     private final CustomerRepository customerRepository;
     private final PasswordEncoder passwordEncoder;
     private final UserDetailsService userDetailsService;
+    private final PaymentTransactionRepository paymentTransactionRepository;
 
-    public AuthController(AuthenticationManager authenticationManager, JwtService jwtService, CustomerRepository customerRepository, PasswordEncoder passwordEncoder, UserDetailsService userDetailsService) {
+    public AuthController(AuthenticationManager authenticationManager, JwtService jwtService, CustomerRepository customerRepository, PasswordEncoder passwordEncoder, UserDetailsService userDetailsService, PaymentTransactionRepository paymentTransactionRepository) {
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.customerRepository = customerRepository;
         this.passwordEncoder = passwordEncoder;
         this.userDetailsService = userDetailsService;
+        this.paymentTransactionRepository = paymentTransactionRepository;
     }
 
     @PostMapping("/login")
@@ -46,13 +50,31 @@ public class AuthController {
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.username());
         String token = jwtService.generateToken(userDetails.getUsername());
         Customer c = customerRepository.findByUsernameIgnoreCase(userDetails.getUsername()).orElseThrow();
-        return ResponseEntity.ok(Map.of(
-                "token", token,
-                "fullName", c.getFullName(),
-                "phone", c.getPhone(),
-                "email", c.getEmail(),
-                "balance", c.getBalance()
-        ));
+        
+        // Check if there's a pending transaction for this customer
+        List<PaymentTransaction.Status> pendingStatuses = List.of(
+            PaymentTransaction.Status.PENDING_OTP,
+            PaymentTransaction.Status.PROCESSING
+        );
+        List<PaymentTransaction> pendingTransactions = paymentTransactionRepository
+            .findByPayerCustomerIdAndStatusIn(c.getId(), pendingStatuses);
+        
+        Map<String, Object> response = new java.util.HashMap<>();
+        response.put("token", token);
+        response.put("fullName", c.getFullName());
+        response.put("phone", c.getPhone());
+        response.put("email", c.getEmail());
+        response.put("balance", c.getBalance());
+        
+        // If there's a pending transaction, include it in the response
+        if (!pendingTransactions.isEmpty()) {
+            PaymentTransaction pendingTxn = pendingTransactions.get(0);
+            response.put("pendingTransactionId", pendingTxn.getId());
+            response.put("pendingTransactionStatus", pendingTxn.getStatus().name());
+            response.put("pendingTransactionCreatedAt", pendingTxn.getCreatedAt().toString());
+        }
+        
+        return ResponseEntity.ok(response);
     }
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}

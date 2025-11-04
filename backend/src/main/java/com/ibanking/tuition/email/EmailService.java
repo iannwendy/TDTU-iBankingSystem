@@ -63,7 +63,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(mime, false, "UTF-8");
             helper.setFrom("no-reply@ibanking.local");
             helper.setTo(payer.getEmail());
-            helper.setSubject("iBanking Tuition Payment – OTP Verification (Test)");
+            helper.setSubject("iBanking Tuition Payment – OTP Verification");
             
             String amountStr = String.format("%,.0f VND", tuition.getAmount().doubleValue());
             String html = createOtpEmailHtml(payer, otp, txn, tuition, amountStr, true);
@@ -101,7 +101,7 @@ public class EmailService {
     
     private String createOtpEmailHtml(Customer payer, String otp, PaymentTransaction txn, 
                                     StudentTuition tuition, String amountStr, boolean isTest) {
-        String title = isTest ? "iBanking Tuition Payment (Test)" : "iBanking Tuition Payment";
+        String title = "iBanking Tuition Payment";
         
         return """
             <html>

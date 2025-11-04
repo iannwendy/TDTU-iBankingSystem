@@ -87,6 +87,25 @@ public class PaymentController {
         }
         
         try {
+            // CRITICAL: Check if payer already has a pending transaction (PENDING_OTP or PROCESSING)
+            // A payer can only have ONE pending transaction at a time, regardless of which student
+            // This prevents confusion and ensures OTP is sent for the correct transaction
+            List<PaymentTransaction.Status> pendingStatuses = List.of(
+                PaymentTransaction.Status.PENDING_OTP,
+                PaymentTransaction.Status.PROCESSING
+            );
+            List<PaymentTransaction> payerPendingTransactions = paymentTransactionRepository
+                .findByPayerCustomerIdAndStatusIn(payer.getId(), pendingStatuses);
+            
+            if (!payerPendingTransactions.isEmpty()) {
+                PaymentTransaction existingTxn = payerPendingTransactions.get(0);
+                return ResponseEntity.status(409).body(Map.of(
+                    "message", 
+                    "You already have a pending payment transaction (ID: " + existingTxn.getId() + 
+                    "). Please complete or cancel it before creating a new transaction."
+                ));
+            }
+            
             // Check if tuition is still available
             if (!paymentService.isTuitionAvailable(normalized, currentSemester)) {
                 return ResponseEntity.status(404).body(Map.of("message", "No unpaid tuition for current semester"));
@@ -103,13 +122,10 @@ public class PaymentController {
                 return ResponseEntity.status(400).body(Map.of("message", "Insufficient balance"));
             }
             
-            // CRITICAL: Check if there's already a pending transaction for this tuition
+            // CRITICAL: Double-check if there's already a pending transaction for this tuition
             // This check MUST be done right before save to prevent race conditions
             // Using SERIALIZABLE isolation ensures this check and save are atomic
-            List<PaymentTransaction.Status> pendingStatuses = List.of(
-                PaymentTransaction.Status.PENDING_OTP,
-                PaymentTransaction.Status.PROCESSING
-            );
+            // Note: We already checked payer-level pending transactions above, but also check student-level
             List<PaymentTransaction> existingPending = paymentTransactionRepository
                 .findByStudentIdAndSemesterAndStatusIn(normalized, currentSemester, pendingStatuses);
             

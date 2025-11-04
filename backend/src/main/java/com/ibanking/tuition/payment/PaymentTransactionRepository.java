@@ -14,6 +14,12 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
         String semester, 
         List<PaymentTransaction.Status> statuses
     );
+    
+    // Find pending transactions for a specific payer (regardless of student)
+    List<PaymentTransaction> findByPayerCustomerIdAndStatusIn(
+        Long payerCustomerId,
+        List<PaymentTransaction.Status> statuses
+    );
 }
 
 
