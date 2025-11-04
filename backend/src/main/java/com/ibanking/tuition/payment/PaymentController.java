@@ -13,12 +13,16 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.web.bind.annotation.*;
  
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
@@ -63,6 +67,7 @@ public class PaymentController {
     }
 
     @PostMapping("/initiate")
+    @Transactional(isolation = Isolation.SERIALIZABLE, rollbackFor = Exception.class)
     public ResponseEntity<?> initiate(Authentication auth, @Valid @RequestBody InitiateRequest req) {
         Customer payer = customerRepository.findByUsername(auth.getName()).orElseThrow();
         String currentSemester = SemesterUtil.currentSemester();
@@ -97,7 +102,47 @@ public class PaymentController {
             if (!paymentService.hasSufficientBalance(payer.getId(), t.getAmount())) {
                 return ResponseEntity.status(400).body(Map.of("message", "Insufficient balance"));
             }
+            
+            // CRITICAL: Check if there's already a pending transaction for this tuition
+            // This check MUST be done right before save to prevent race conditions
+            // Using SERIALIZABLE isolation ensures this check and save are atomic
+            List<PaymentTransaction.Status> pendingStatuses = List.of(
+                PaymentTransaction.Status.PENDING_OTP,
+                PaymentTransaction.Status.PROCESSING
+            );
+            List<PaymentTransaction> existingPending = paymentTransactionRepository
+                .findByStudentIdAndSemesterAndStatusIn(normalized, currentSemester, pendingStatuses);
+            
+            if (!existingPending.isEmpty()) {
+                return ResponseEntity.status(409).body(Map.of(
+                    "message", 
+                    "There is already a pending payment transaction for this student. Please wait for it to complete or expire."
+                ));
+            }
+            
+            // All checks passed, now we'll create the transaction
+            // Register synchronization callback BEFORE creating transaction to ensure locks are released after commit
+            final boolean[] locksReleased = {false};
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    paymentService.releaseLock(payerLockKey);
+                    paymentService.releaseLock(tuitionLockKey);
+                    locksReleased[0] = true;
+                }
+                
+                @Override
+                public void afterCompletion(int status) {
+                    // If transaction rolled back, also release locks (afterCommit already handled commit case)
+                    if (!locksReleased[0] && status == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                        paymentService.releaseLock(payerLockKey);
+                        paymentService.releaseLock(tuitionLockKey);
+                        locksReleased[0] = true;
+                    }
+                }
+            });
 
+            // Create transaction - this will be committed atomically with the check above
             PaymentTransaction txn = new PaymentTransaction();
             txn.setPayerCustomerId(payer.getId());
             txn.setStudentId(t.getStudentId());
@@ -108,6 +153,10 @@ public class PaymentController {
             txn.setLockId(UUID.randomUUID().toString());
             txn.setLockExpiry(OffsetDateTime.now().plusSeconds(30));
             txn = paymentTransactionRepository.save(txn);
+            
+            // Flush immediately to ensure transaction is visible in current transaction
+            // This prevents other transactions from passing the check above
+            paymentTransactionRepository.flush();
 
             String otp = generateOtp(otpLength);
             String otpKey = otpKey(txn.getId());
@@ -125,10 +174,11 @@ public class PaymentController {
 
             return ResponseEntity.ok(Map.of("transactionId", txn.getId(), "ttlSeconds", otpTtlSeconds));
             
-        } finally {
-            // Always release locks
+        } catch (Exception e) {
+            // If any error occurs, release locks immediately
             paymentService.releaseLock(payerLockKey);
             paymentService.releaseLock(tuitionLockKey);
+            throw e;
         }
     }
 
@@ -159,6 +209,19 @@ public class PaymentController {
 
         if (!expected.equals(req.otp())) {
             return ResponseEntity.status(401).body(Map.of("message", "Invalid OTP"));
+        }
+
+        // CRITICAL: Re-acquire locks before processing payment to prevent concurrent processing
+        String payerLockKey = lockKey("payer", String.valueOf(txn.getPayerCustomerId()));
+        String tuitionLockKey = lockKey("tuition", txn.getStudentId() + ":" + txn.getSemester());
+        
+        boolean payerLocked = paymentService.tryAcquireLockWithRetry(payerLockKey, 3);
+        boolean tuitionLocked = paymentService.tryAcquireLockWithRetry(tuitionLockKey, 3);
+        
+        if (!(payerLocked && tuitionLocked)) {
+            if (payerLocked) paymentService.releaseLock(payerLockKey);
+            if (tuitionLocked) paymentService.releaseLock(tuitionLockKey);
+            return ResponseEntity.status(423).body(Map.of("message", "Resource busy, please try again later"));
         }
 
         // Use PaymentService for processing with proper concurrency control
@@ -192,6 +255,10 @@ public class PaymentController {
                 return ResponseEntity.status(409).body(Map.of("message", "Transaction conflict detected, please retry"));
             }
             return ResponseEntity.status(500).body(Map.of("message", "Payment processing failed: " + e.getMessage()));
+        } finally {
+            // Always release locks after processing
+            paymentService.releaseLock(payerLockKey);
+            paymentService.releaseLock(tuitionLockKey);
         }
     }
 
